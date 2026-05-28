@@ -3,7 +3,13 @@ import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
 import { loadConfig } from "@ccb/shared/config";
 import { makeLogger } from "@ccb/shared/logger";
-import { isCcbError, NotFoundError, ValidationError, PermissionError } from "@ccb/shared/errors";
+import {
+  isCcbError,
+  NotFoundError,
+  ValidationError,
+  PermissionError,
+  ShellError,
+} from "@ccb/shared/errors";
 import { reposRouter } from "./routes/repos.js";
 import { tasksRouter } from "./routes/tasks.js";
 import { diffsRouter } from "./routes/diffs.js";
@@ -41,10 +47,24 @@ app.route("/diffs", diffsRouter());
 app.route("/sessions", sessionsRouter());
 app.route("/threads", threadsRouter());
 
+// Scrub any leaked token from git output before returning it to clients.
+function redact(s: string): string {
+  return s.replace(/x-access-token:[^@]+@/g, "x-access-token:***@");
+}
+
 app.onError((err, c) => {
   if (err instanceof ValidationError) return c.json({ error: err.message, code: err.code }, 400);
   if (err instanceof NotFoundError) return c.json({ error: err.message, code: err.code }, 404);
   if (err instanceof PermissionError) return c.json({ error: err.message, code: err.code }, 403);
+  if (err instanceof ShellError) {
+    // Surface the real reason (git/gh stderr tail) instead of just the exit code.
+    const detail = redact((err.stderr || err.stdout || "").trim()).slice(-600);
+    log.error({ err, stderr: err.stderr }, "shell error");
+    return c.json(
+      { error: err.message, code: err.code, detail: detail || undefined },
+      500,
+    );
+  }
   if (isCcbError(err)) {
     log.error({ err }, "ccb error");
     return c.json({ error: err.message, code: err.code }, 500);

@@ -1,7 +1,28 @@
 import { run, type RunOptions } from "@ccb/shared/shell";
 import { makeLogger } from "@ccb/shared/logger";
+import { loadConfig } from "@ccb/shared/config";
 
 const log = makeLogger("git");
+
+/**
+ * Build git env that (a) never prompts for credentials interactively — so a
+ * missing/invalid token fails fast instead of hanging — and (b) injects the
+ * GitHub token for github.com HTTPS remotes via an `insteadOf` rewrite passed
+ * through env (GIT_CONFIG_*), so the token is NOT persisted into .git/config.
+ */
+function gitEnv(): Record<string, string> {
+  const env: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+  };
+  const token = loadConfig().github.token;
+  if (token) {
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = `url.https://x-access-token:${token}@github.com/.insteadOf`;
+    env.GIT_CONFIG_VALUE_0 = "https://github.com/";
+  }
+  return env;
+}
 
 /**
  * Thin wrapper around the `git` CLI. All callers MUST pass arguments as an array
@@ -9,7 +30,11 @@ const log = makeLogger("git");
  */
 export async function git(args: string[], opts: RunOptions = {}) {
   log.debug({ args, cwd: opts.cwd }, "git");
-  return run("git", args, { timeoutMs: 120_000, ...opts });
+  return run("git", args, {
+    timeoutMs: 120_000,
+    ...opts,
+    env: { ...gitEnv(), ...(opts.env ?? {}) },
+  });
 }
 
 export async function clone(remoteUrl: string, dest: string, opts: { branch?: string } = {}) {
