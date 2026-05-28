@@ -8,6 +8,13 @@ import { RepoRegistry, WorktreeManager, summarizeDiff, diffOneLiner } from "@ccb
 import { MemoryStore } from "@ccb/memory-system";
 import { PromptBuilder } from "@ccb/prompt-system";
 import { runClaudeTask } from "@ccb/claude-runner";
+import {
+  commitAll,
+  commitsAhead,
+  pushBranch,
+  ensurePullRequest,
+  suggestCommitMessage,
+} from "@ccb/github-tools";
 import { getRedis } from "./queue.js";
 
 const log = makeLogger("worker.processor");
@@ -176,14 +183,50 @@ export async function processTask(data: TaskJobData, opts: ProcessOptions = {}):
     }
   }
 
-  // 5. Capture diff summary (even on failure — useful for debugging).
+  // 5. Capture diff summary against the branch base, so it reflects ALL changes
+  //    on the branch whether Claude committed them or left them uncommitted.
+  const baseRef = `origin/${wt.baseBranch}`;
   let diffLine = "no changes";
   try {
-    const summary = await summarizeDiff(wt.path);
+    const summary = await summarizeDiff(wt.path, baseRef);
     diffLine = diffOneLiner(summary);
     await publish(taskId, { type: "diff", taskId, summary: summary.preview, at: Date.now() });
   } catch (e) {
     log.warn({ err: e, taskId }, "diff summarization failed");
+  }
+
+  // 5b. Auto-PR: on success, if the branch has changes, commit any leftovers,
+  //     push, and open (or update) a pull request — no need to ask Claude.
+  if (!runError && process.env.AUTO_PR !== "false") {
+    try {
+      await commitAll(wt.path, suggestCommitMessage(prompt, diffLine));
+      const ahead = await commitsAhead(wt.path, baseRef);
+      if (ahead > 0) {
+        await pushBranch(wt.path, wt.branch);
+        const prUrl = await ensurePullRequest({
+          cwd: wt.path,
+          branch: wt.branch,
+          base: wt.baseBranch,
+          title: prompt.split("\n")[0]!.slice(0, 70),
+          body: `Automated by claude-code-bot.\n\nTask: ${prompt}\n\nChanges: ${diffLine}`,
+        });
+        await publish(taskId, {
+          type: "stdout",
+          taskId,
+          data: `\n🔗 Pull request: ${prUrl}\n`,
+          at: Date.now(),
+        });
+        log.info({ taskId, prUrl }, "opened/updated pull request");
+      }
+    } catch (e) {
+      log.warn({ err: e, taskId }, "auto-PR failed");
+      await publish(taskId, {
+        type: "stderr",
+        taskId,
+        data: `\n⚠️ Auto-PR failed: ${(e as Error).message}\n`,
+        at: Date.now(),
+      }).catch(() => {});
+    }
   }
 
   // 6. Persist final status.

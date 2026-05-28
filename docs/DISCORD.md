@@ -90,6 +90,12 @@ How it works:
   conversation memory carries over.
 * The worktree is **not** thrown away between messages — file edits accumulate
   until the thread is closed.
+* **Auto-PR** (default on, `AUTO_PR=true`): after a task that produced changes,
+  the worker commits, pushes the thread's branch (`ccb/<threadId>`), and opens
+  (or updates) a pull request — the PR link is posted in the thread. No need to
+  ask Claude to push. Follow-up tasks in the same thread push more commits to
+  the same PR. Set `AUTO_PR=false` to do it manually instead. Requires
+  `GITHUB_TOKEN` with write access.
 
 Notes:
 

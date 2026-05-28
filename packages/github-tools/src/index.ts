@@ -64,11 +64,50 @@ export async function getIssue(cwd: string, number: number) {
 
 export async function commitAll(cwd: string, message: string) {
   await run("git", ["add", "-A"], { cwd });
+  // allowFailure: a clean tree (Claude already committed) makes commit exit 1.
   await run("git", ["commit", "-m", message], { cwd, allowFailure: true });
 }
 
 export async function pushBranch(cwd: string, branch: string) {
   await run("git", ["push", "-u", "origin", branch], { cwd });
+}
+
+/** Number of commits on HEAD not in `baseRef` (e.g. "origin/main"). */
+export async function commitsAhead(cwd: string, baseRef: string): Promise<number> {
+  const r = await run("git", ["rev-list", "--count", `${baseRef}..HEAD`], {
+    cwd,
+    allowFailure: true,
+  });
+  return Number(r.stdout.trim()) || 0;
+}
+
+/**
+ * Return the URL of the PR for `branch`, creating one if it doesn't exist yet.
+ * Subsequent pushes to the same branch update the existing PR automatically.
+ */
+export async function ensurePullRequest(opts: {
+  cwd: string;
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+}): Promise<string> {
+  try {
+    const r = await gh(["pr", "view", opts.branch, "--json", "url", "--jq", ".url"], {
+      cwd: opts.cwd,
+    });
+    const url = r.stdout.trim();
+    if (url) return url;
+  } catch {
+    /* no PR yet — fall through to create */
+  }
+  return createPullRequest({
+    cwd: opts.cwd,
+    title: opts.title,
+    body: opts.body,
+    base: opts.base,
+    head: opts.branch,
+  });
 }
 
 /** Build a default commit message from a prompt + diff one-liner. */
