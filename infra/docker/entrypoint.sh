@@ -28,9 +28,9 @@ if [ -n "$GITHUB_TOKEN" ]; then
   su-exec bun git config --global credential."https://github.com".helper "" || true
 fi
 
-# Sensible default git identity for AI-authored commits (override per repo).
-su-exec bun git config --global user.name "${GIT_AUTHOR_NAME:-claude-code-bot}" || true
-su-exec bun git config --global user.email "${GIT_AUTHOR_EMAIL:-bot@claude-code-bot.local}" || true
+# Default git identity for AI-authored commits (override via env per deploy).
+su-exec bun git config --global user.name "${GIT_AUTHOR_NAME:-vuluu2k}" || true
+su-exec bun git config --global user.email "${GIT_AUTHOR_EMAIL:-vuluu040320@gmail.com}" || true
 su-exec bun git config --global init.defaultBranch main || true
 
 exec su-exec bun "$@"
