@@ -112,12 +112,15 @@ worktree, no thread needed:
 ```
 
 * The bot runs Claude in a per-channel scratch dir and replies inline.
-* `--continue` keeps context per channel, so you can follow up:
-  `@bot bây giờ viết lại bằng Python` and it remembers the previous answer.
-* Conversation memory resets if the bot restarts (fine for chit-chat).
+* **Reads context**: it pulls the last `CHAT_CONTEXT_MESSAGES` channel messages
+  (default 15) plus the message you're replying to, so you can ask things like
+  *"@bot tóm tắt những gì tụi mình vừa bàn"* or reply to a code snippet and ask
+  *"@bot fix cái này"* without re-pasting.
 * The bot only responds when **directly @mentioned** in normal channels (it
   ignores everything else to avoid noise). Inside task threads you don't need to
   mention it — just type.
+* Set `CHAT_CONTEXT_MESSAGES=0` to disable context gathering (answer only the
+  mention text).
 
 Requires `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) to be set on the
 **bot** service too — see docs/COOLIFY.md.

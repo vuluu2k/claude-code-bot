@@ -304,16 +304,80 @@ async function handleThreadMessage(message: Message) {
   });
 }
 
-// Channels (per channel id) that already have a Claude chat conversation, so we
-// pass --continue on subsequent @mentions. In-memory: resets on bot restart,
-// which just starts a fresh casual conversation (fine for chit-chat).
-const chatStarted = new Set<string>();
 const CHAT_TIMEOUT_MS = 180_000;
+// How many recent channel messages to feed Claude as context (env-tunable).
+const CHAT_CONTEXT_MESSAGES = Math.max(
+  0,
+  Math.min(Number(process.env.CHAT_CONTEXT_MESSAGES ?? 15), 50),
+);
+
+function displayName(m: Message): string {
+  if (bot.user && m.author.id === bot.user.id) return "Bot";
+  return m.member?.displayName ?? m.author.username;
+}
+
+/** One context line: "[Name]: text" with mentions cleaned + truncated. */
+function contextLine(m: Message, max = 300): string {
+  let text = m.content.replace(/<@!?\d+>/g, "@user").trim();
+  if (!text && m.attachments.size) text = "[attachment]";
+  if (!text && m.embeds.length) text = "[embed]";
+  if (!text) return "";
+  if (text.length > max) text = text.slice(0, max) + "…";
+  return `[${displayName(m)}]: ${text}`;
+}
+
+/**
+ * Assemble the chat prompt from (A) recent channel messages and (B) the message
+ * being replied to, plus the current question. Gives Claude real conversational
+ * context instead of just the bare mention.
+ */
+async function buildChatPrompt(message: Message, question: string): Promise<string> {
+  const parts: string[] = [
+    "Bạn là một trợ lý thân thiện trong một kênh chat Discord.",
+  ];
+
+  // (A) Recent channel messages, oldest → newest, excluding this one.
+  if (CHAT_CONTEXT_MESSAGES > 0 && "messages" in message.channel) {
+    try {
+      const fetched = await message.channel.messages.fetch({
+        limit: CHAT_CONTEXT_MESSAGES,
+        before: message.id,
+      });
+      const lines = [...fetched.values()]
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((m) => contextLine(m))
+        .filter(Boolean);
+      if (lines.length) {
+        parts.push("## Bối cảnh kênh gần đây (cũ → mới)\n" + lines.join("\n"));
+      }
+    } catch {
+      /* missing Read Message History — skip context */
+    }
+  }
+
+  // (B) The message this mention is replying to, if any.
+  if (message.reference?.messageId) {
+    try {
+      const ref = await message.fetchReference();
+      const line = contextLine(ref, 800);
+      if (line) parts.push("## Đang trả lời tin nhắn\n" + line);
+    } catch {
+      /* deleted / inaccessible — skip */
+    }
+  }
+
+  parts.push(`## Tin nhắn hiện tại (từ ${displayName(message)})\n${question}`);
+  parts.push(
+    "Hãy trả lời tin nhắn hiện tại, dùng bối cảnh ở trên khi liên quan. " +
+      "Trả lời bằng ngôn ngữ của người dùng, ngắn gọn và thân thiện.",
+  );
+  return parts.join("\n\n");
+}
 
 /**
  * Casual chat: when the bot is @mentioned in a normal channel (not a task
- * thread), run Claude in a per-channel scratch dir and reply. No repo, no
- * worktree — just conversation. `--continue` keeps context per channel.
+ * thread), run Claude in a per-channel scratch dir and reply. Pulls recent
+ * channel messages + any replied-to message in as context.
  */
 async function handleMention(message: Message) {
   if (message.author.bot) return;
@@ -337,9 +401,8 @@ async function handleMention(message: Message) {
   await channel.sendTyping().catch(() => {});
   const typing = setInterval(() => channel.sendTyping().catch(() => {}), 8_000);
 
-  const args = ["--print", "--dangerously-skip-permissions"];
-  if (chatStarted.has(message.channelId)) args.push("--continue");
-  args.push(text);
+  const prompt = await buildChatPrompt(message, text);
+  const args = ["--print", "--dangerously-skip-permissions", prompt];
 
   const env: Record<string, string> = {};
   if (cfg.claude.apiKey) env.ANTHROPIC_API_KEY = cfg.claude.apiKey;
@@ -354,7 +417,6 @@ async function handleMention(message: Message) {
       allowFailure: true,
     });
     clearInterval(typing);
-    chatStarted.add(message.channelId);
     const out = (res.stdout || res.stderr || "").trim() || "(không có phản hồi)";
     for (const part of chunk(out, 1990)) {
       await channel.send(part).catch(() => {});
