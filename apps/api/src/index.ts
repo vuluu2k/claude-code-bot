@@ -10,10 +10,23 @@ import { diffsRouter } from "./routes/diffs.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { threadsRouter } from "./routes/threads.js";
 import { closeQueue } from "./queue.js";
-import { closeDb } from "@ccb/db";
+import { closeDb, runMigrations } from "@ccb/db";
 
 const log = makeLogger("api");
 const cfg = loadConfig();
+
+// Auto-apply DB migrations on boot unless explicitly disabled. The API waits
+// for Postgres to be healthy (compose depends_on), so this is the natural place
+// to bootstrap the schema without a manual step.
+if (process.env.AUTO_MIGRATE !== "false") {
+  try {
+    await runMigrations(cfg.databaseUrl);
+    log.info("migrations applied");
+  } catch (err) {
+    log.error({ err }, "migration failed — exiting");
+    process.exit(1);
+  }
+}
 
 const app = new Hono();
 app.use("*", honoLogger((msg) => log.info(msg)));

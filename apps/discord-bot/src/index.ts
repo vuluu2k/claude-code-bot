@@ -14,6 +14,7 @@ import { loadConfig } from "@ccb/shared/config";
 import { makeLogger } from "@ccb/shared/logger";
 import { EVENT_CHANNEL, type StreamEvent } from "@ccb/shared";
 import { client as api } from "./api-client.js";
+import { registerCommands } from "./register-commands.js";
 
 const log = makeLogger("discord-bot");
 const cfg = loadConfig();
@@ -366,8 +367,16 @@ async function handleAutocomplete(i: AutocompleteInteraction) {
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
-bot.once(Events.ClientReady, (c) => {
+bot.once(Events.ClientReady, async (c) => {
   log.info({ tag: c.user.tag }, "bot online");
+  // Keep slash commands in sync on every boot unless disabled.
+  if (process.env.AUTO_REGISTER_COMMANDS !== "false") {
+    try {
+      await registerCommands();
+    } catch (err) {
+      log.error({ err }, "auto-registering commands failed");
+    }
+  }
 });
 
 bot.on(Events.InteractionCreate, async (interaction: Interaction) => {

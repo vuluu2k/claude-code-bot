@@ -61,7 +61,7 @@ docs/        architecture, deploy, security
 # 3. In three terminals
 bun run start:api
 bun run start:worker
-bun --filter @ccb/discord-bot register   # one-time slash command sync
+bun run bot:register   # optional — the bot also auto-registers on boot
 bun run start:bot
 ```
 

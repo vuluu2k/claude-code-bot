@@ -26,7 +26,7 @@ bun run start:api
 bun run start:worker
 
 # Terminal 3 — one-time slash-command sync, then run the bot
-bun --filter @ccb/discord-bot register
+bun run bot:register
 bun run start:bot
 ```
 
@@ -42,7 +42,7 @@ bun run dev
 bun run typecheck                  # turbo runs tsc --noEmit across all packages
 bun run db:generate                # drizzle-kit generate from schema.ts
 bun run db:studio                  # web UI for the database
-bun --filter @ccb/discord-bot register   # re-sync slash commands
+bun run bot:register   # re-sync slash commands
 
 # Manually register a repo via HTTP
 curl -X POST http://localhost:4000/repos \

@@ -5,6 +5,7 @@ import * as schema from "./schema.js";
 
 export * from "./schema.js";
 export { schema };
+export { runMigrations } from "./migrate.js";
 
 let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 let _sql: ReturnType<typeof postgres> | null = null;

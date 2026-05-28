@@ -32,7 +32,7 @@ separated). Admins can call privileged commands like `/register-repo`.
 ## 5. Register slash commands
 
 ```bash
-bun --filter @ccb/discord-bot register
+bun run bot:register
 ```
 
 You should see:

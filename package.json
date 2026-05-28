@@ -14,13 +14,14 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "clean": "turbo run clean && rm -rf node_modules .turbo",
-    "db:generate": "bun --filter @ccb/db generate",
-    "db:migrate": "bun --filter @ccb/db migrate",
-    "db:studio": "bun --filter @ccb/db studio",
+    "db:generate": "cd packages/db && bunx drizzle-kit generate",
+    "db:migrate": "bun run packages/db/src/migrate.ts",
+    "db:studio": "cd packages/db && bunx drizzle-kit studio",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
-    "start:api": "bun --filter @ccb/api start",
-    "start:worker": "bun --filter @ccb/worker start",
-    "start:bot": "bun --filter @ccb/discord-bot start"
+    "start:api": "bun run apps/api/src/index.ts",
+    "start:worker": "bun run apps/worker/src/index.ts",
+    "start:bot": "bun run apps/discord-bot/src/index.ts",
+    "bot:register": "bun run apps/discord-bot/src/register-commands.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.1.14",

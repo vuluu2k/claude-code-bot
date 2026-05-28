@@ -32,8 +32,8 @@ $EDITOR .env          # fill in tokens, ports, etc.
 
 ```bash
 docker compose -f infra/docker/docker-compose.full.yml --env-file .env up -d --build
-docker compose -f infra/docker/docker-compose.full.yml exec api bun --filter @ccb/db migrate
-docker compose -f infra/docker/docker-compose.full.yml exec bot bun --filter @ccb/discord-bot register
+docker compose -f infra/docker/docker-compose.full.yml exec api bun run db:migrate
+docker compose -f infra/docker/docker-compose.full.yml exec bot bun run bot:register
 ```
 
 This launches: postgres, redis, api (port 4000), worker, discord-bot.
@@ -64,7 +64,7 @@ Discord-only deployments can keep API on `localhost`.
 ```bash
 git pull
 docker compose -f infra/docker/docker-compose.full.yml up -d --build
-docker compose -f infra/docker/docker-compose.full.yml exec api bun --filter @ccb/db migrate
+docker compose -f infra/docker/docker-compose.full.yml exec api bun run db:migrate
 ```
 
 ## 7. Scaling out

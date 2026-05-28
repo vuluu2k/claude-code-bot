@@ -81,15 +81,14 @@ First build takes ~3–5 minutes (npm installs Claude CLI + ripgrep, bun install
 
 ---
 
-## 5. Run migrations (one-time)
+## 5. Database migrations (automatic)
 
-Open the **api** service → **Terminal** → run:
+Migrations run **automatically** when the `api` service boots (it waits for
+Postgres to be healthy first). You don't need to do anything.
 
-```bash
-bun --filter @ccb/db migrate
-```
-
-You should see `Migrations applied.`
+To confirm, check the `api` logs for `migrations applied`. Manual fallback if
+you ever disable auto-migrate (`AUTO_MIGRATE=false`): open the **api** terminal
+and run `bun run packages/db/src/migrate.ts`.
 
 ---
 
@@ -146,15 +145,14 @@ claude --print 'reply with just OK'
 
 ---
 
-## 6. Register Discord slash commands (one-time)
+## 6. Slash commands (automatic)
 
-Open the **bot** service → **Terminal** → run:
+The bot **auto-registers** its slash commands every time it boots. With
+`DISCORD_GUILD_ID` set they appear in that guild immediately; without it they're
+global (up to ~1h to propagate).
 
-```bash
-bun --filter @ccb/discord-bot register
-```
-
-If `DISCORD_GUILD_ID` is set, commands appear in that guild immediately.
+Disable with `AUTO_REGISTER_COMMANDS=false`. Manual fallback: open the **bot**
+terminal and run `bun run apps/discord-bot/src/register-commands.ts`.
 
 ---
 

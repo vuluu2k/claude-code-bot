@@ -56,8 +56,8 @@ done
 
 # 5. Migrations
 ok "Generating and applying Drizzle migrations"
-bun --filter @ccb/db generate || true
-bun --filter @ccb/db migrate
+bun run db:generate || true
+bun run db:migrate
 
 ok "Bootstrap complete."
 echo
@@ -65,5 +65,5 @@ echo "Next steps:"
 echo "  1. Fill in .env (Discord, GitHub, Anthropic tokens)"
 echo "  2. Start the API:    bun run start:api"
 echo "  3. Start the worker: bun run start:worker"
-echo "  4. Register Discord slash commands: bun --filter @ccb/discord-bot register"
+echo "  4. (optional) Pre-register slash commands: bun run bot:register  — the bot also auto-registers on boot"
 echo "  5. Start the bot:    bun run start:bot"
