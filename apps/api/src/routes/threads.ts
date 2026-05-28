@@ -4,6 +4,12 @@ import { eq } from "drizzle-orm";
 import { getDb, threads } from "@ccb/db";
 import { NotFoundError, ValidationError } from "@ccb/shared/errors";
 import { RepoRegistry } from "@ccb/repo-manager";
+import {
+  commitAll,
+  commitsAhead,
+  pushBranch,
+  ensurePullRequest,
+} from "@ccb/github-tools";
 
 const RegisterThread = z.object({
   id: z.string().min(1), // discord thread id
@@ -62,6 +68,39 @@ export function threadsRouter() {
       .set({ status: "closed", updatedAt: new Date() })
       .where(eq(threads.id, id));
     return c.json({ ok: true });
+  });
+
+  // User-triggered: commit leftovers, push the thread's branch, open/update a PR.
+  app.post("/:id/pr", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({}));
+    const title = typeof body.title === "string" ? body.title : "";
+
+    const rows = await getDb().select().from(threads).where(eq(threads.id, id)).limit(1);
+    const thread = rows[0];
+    if (!thread) throw new NotFoundError("thread", id);
+    if (!thread.worktreePath || !thread.branch) {
+      throw new ValidationError("thread has no worktree yet — run a task first");
+    }
+
+    const repo = await registry.get(thread.repoSlug);
+    const base = repo.defaultBranch;
+    const cwd = thread.worktreePath;
+
+    await commitAll(cwd, title || "chore: changes via /pr");
+    const ahead = await commitsAhead(cwd, `origin/${base}`);
+    if (ahead === 0) {
+      return c.json({ pr: null, reason: "no changes to open a PR for" });
+    }
+    await pushBranch(cwd, thread.branch);
+    const url = await ensurePullRequest({
+      cwd,
+      branch: thread.branch,
+      base,
+      title: title || `Changes from ${thread.repoSlug} thread`,
+      body: `Opened from Discord via /pr (thread ${id}).`,
+    });
+    return c.json({ pr: url });
   });
 
   return app;

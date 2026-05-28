@@ -77,6 +77,8 @@ export const client = {
       `/threads/${id}`,
     ),
   closeThread: (id: string) => api<{ ok: true }>("POST", `/threads/${id}/close`),
+  createPr: (id: string, title?: string) =>
+    api<{ pr: string | null; reason?: string }>("POST", `/threads/${id}/pr`, { title }),
   getTask: (id: string) => api<{ task: Task }>("GET", `/tasks/${id}`),
   getLogs: (id: string) => api<{ logs: TaskLog[] }>("GET", `/tasks/${id}/logs`),
   cancelTask: (id: string) => api<{ ok: true }>("POST", `/tasks/${id}/cancel`),

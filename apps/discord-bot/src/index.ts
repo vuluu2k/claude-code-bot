@@ -509,6 +509,28 @@ async function handleSession(i: ChatInputCommandInteraction) {
   }
 }
 
+async function handlePr(i: ChatInputCommandInteraction) {
+  const title = i.options.getString("title") ?? undefined;
+  if (!i.channel?.isThread()) {
+    await i.reply({
+      content: "Dùng `/pr` bên trong một thread do `/repo` tạo nhé.",
+      ephemeral: true,
+    });
+    return;
+  }
+  await i.deferReply();
+  try {
+    const { pr, reason } = await api.createPr(i.channelId, title);
+    if (pr) {
+      await i.editReply(`🔗 Pull request: ${pr}`);
+    } else {
+      await i.editReply(`Không tạo PR: ${reason ?? "không có thay đổi"}`);
+    }
+  } catch (err) {
+    await i.editReply(`Tạo PR thất bại: ${(err as Error).message}`);
+  }
+}
+
 async function handleCancel(i: ChatInputCommandInteraction) {
   const id = i.options.getString("task_id", true);
   await i.deferReply({ ephemeral: true });
@@ -577,6 +599,8 @@ bot.on(Events.InteractionCreate, async (interaction: Interaction) => {
         return handleSession(interaction);
       case "cancel":
         return handleCancel(interaction);
+      case "pr":
+        return handlePr(interaction);
     }
   } catch (err) {
     log.error({ err }, "interaction handler crashed");

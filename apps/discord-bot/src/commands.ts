@@ -86,4 +86,12 @@ export const commands = [
       o.setName("task_id").setDescription("Task ID").setRequired(true),
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("pr")
+    .setDescription("Push this thread's branch and open a pull request")
+    .addStringOption((o) =>
+      o.setName("title").setDescription("PR title (optional)").setRequired(false),
+    )
+    .toJSON(),
 ];

@@ -195,9 +195,10 @@ export async function processTask(data: TaskJobData, opts: ProcessOptions = {}):
     log.warn({ err: e, taskId }, "diff summarization failed");
   }
 
-  // 5b. Auto-PR: on success, if the branch has changes, commit any leftovers,
-  //     push, and open (or update) a pull request — no need to ask Claude.
-  if (!runError && process.env.AUTO_PR !== "false") {
+  // 5b. Optional auto-PR (OFF by default). PRs are normally user-triggered via
+  //     the /pr command or by asking Claude in the thread. Set AUTO_PR=true to
+  //     open a PR automatically after every task that produced changes.
+  if (!runError && process.env.AUTO_PR === "true") {
     try {
       await commitAll(wt.path, suggestCommitMessage(prompt, diffLine));
       const ahead = await commitsAhead(wt.path, baseRef);

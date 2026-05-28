@@ -65,6 +65,7 @@ status line and a diff preview when it finishes.
 | `/logs` | Tail the persisted log chunks |
 | `/session new` / `/session list` | Manage repo-scoped sessions |
 | `/cancel` | Send a cancellation signal to a running task |
+| `/pr` | (in a thread) push the branch and open/update a pull request |
 
 ## Thread-as-session mode (like terminal Claude Code)
 
@@ -90,12 +91,13 @@ How it works:
   conversation memory carries over.
 * The worktree is **not** thrown away between messages — file edits accumulate
   until the thread is closed.
-* **Auto-PR** (default on, `AUTO_PR=true`): after a task that produced changes,
-  the worker commits, pushes the thread's branch (`ccb/<threadId>`), and opens
-  (or updates) a pull request — the PR link is posted in the thread. No need to
-  ask Claude to push. Follow-up tasks in the same thread push more commits to
-  the same PR. Set `AUTO_PR=false` to do it manually instead. Requires
-  `GITHUB_TOKEN` with write access.
+* **Opening a PR** is user-triggered — two ways:
+  * Run `/pr` (optionally `/pr title:...`) inside the thread → commits, pushes
+    the thread's branch (`ccb/<threadId>`), opens or updates a PR, posts the link.
+  * Or just ask Claude in the thread: *"push branch và tạo pull request"*.
+  Follow-up tasks/commits in the same thread go to the same PR. Requires
+  `GITHUB_TOKEN` with write access. Set `AUTO_PR=true` if you instead want a PR
+  opened automatically after every task that changed files.
 
 Notes:
 
