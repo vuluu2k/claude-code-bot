@@ -1,9 +1,9 @@
 # Multi-stage build for api / worker / discord-bot services.
 # Build once, pick the entrypoint with `command:` in compose.
 #
-# Includes the Claude Code CLI so workers running SANDBOX_MODE=host can spawn
-# `claude --print ...` directly inside the container. The CLI authenticates
-# via ANTHROPIC_API_KEY env var — see docs/COOLIFY.md.
+# Runs as the non-root `bun` user (uid 1000, from the base image): Claude Code
+# refuses --dangerously-skip-permissions when running as root. An entrypoint
+# fixes volume ownership then drops privileges with su-exec.
 
 FROM oven/bun:1.1-alpine AS deps
 WORKDIR /app
@@ -21,22 +21,31 @@ WORKDIR /app
 # nodejs + npm         : install + run @anthropic-ai/claude-code
 # curl / bash / jq     : misc tooling Claude often shells out to
 # ripgrep              : Claude's preferred search tool
+# su-exec              : drop from root → ccb in the entrypoint
 RUN apk add --no-cache \
       git openssh-client tmux \
       nodejs npm \
-      curl bash jq ripgrep ca-certificates \
+      curl bash jq ripgrep ca-certificates su-exec \
     && npm install -g @anthropic-ai/claude-code \
     && rm -rf /var/cache/apk/* /root/.npm
+
+# Reuse the non-root `bun` user (uid/gid 1000) shipped by the base image.
+RUN mkdir -p /home/bun/.claude /app/workspaces \
+    && chown -R bun:bun /home/bun /app/workspaces
 
 COPY --from=deps /app /app
 
 ENV NODE_ENV=production
 ENV CLAUDE_BIN=claude
 ENV WORKSPACE_ROOT=/app/workspaces
-# Claude CLI reads/writes OAuth tokens here. Mount a persistent volume at
-# this path so login survives redeploys (see docker-compose.coolify.yml).
-ENV HOME=/root
-ENV CLAUDE_CONFIG_DIR=/root/.claude
+# Claude CLI reads/writes config + OAuth cache here (the bun home, on a volume).
+ENV HOME=/home/bun
+ENV CLAUDE_CONFIG_DIR=/home/bun/.claude
 
-# Default entrypoint is the API; worker + bot override via `command:`.
+COPY infra/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# entrypoint runs as root (to chown volumes) then exec's as ccb.
+ENTRYPOINT ["/entrypoint.sh"]
+# Default command is the API; worker + bot override via `command:`.
 CMD ["bun", "apps/api/src/index.ts"]

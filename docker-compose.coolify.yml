@@ -66,7 +66,7 @@ services:
       start_period: 20s
     volumes:
       - ccb-workspaces:/app/workspaces
-      - ccb-claude-auth:/root/.claude
+      - ccb-claude-auth:/home/bun/.claude
 
   worker:
     build:
@@ -88,7 +88,7 @@ services:
       #      machine. Recommended for headless deploys (no volume needed).
       #   2. ANTHROPIC_API_KEY     — API key from console.anthropic.com.
       #   3. Interactive `claude /login` in this terminal — credentials persist
-      #      in the ccb-claude-auth volume mounted at /root/.claude.
+      #      in the ccb-claude-auth volume mounted at /home/bun/.claude.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
@@ -100,7 +100,7 @@ services:
     command: ["bun", "apps/worker/src/index.ts"]
     volumes:
       - ccb-workspaces:/app/workspaces
-      - ccb-claude-auth:/root/.claude
+      - ccb-claude-auth:/home/bun/.claude
 
   bot:
     build:
@@ -126,7 +126,7 @@ services:
     command: ["bun", "apps/discord-bot/src/index.ts"]
     volumes:
       - ccb-workspaces:/app/workspaces
-      - ccb-claude-auth:/root/.claude
+      - ccb-claude-auth:/home/bun/.claude
 
 volumes:
   ccb-pgdata:

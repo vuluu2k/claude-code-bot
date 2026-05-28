@@ -135,7 +135,7 @@ Open the **worker** service → **Terminal**:
 claude /login
 ```
 
-The CLI prints a URL. Open it on **your** machine, log in, paste the returned code back into the terminal. Credentials cache in `/root/.claude/`, which is on the named volume `ccb-claude-auth` — so the login survives redeploys.
+The CLI prints a URL. Open it on **your** machine, log in, paste the returned code back into the terminal. Credentials cache in `/home/bun/.claude/`, which is on the named volume `ccb-claude-auth` — so the login survives redeploys.
 
 Verify:
 
