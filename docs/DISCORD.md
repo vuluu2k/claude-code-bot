@@ -13,7 +13,7 @@ OAuth2 → URL Generator:
 
 * Scopes: `bot`, `applications.commands`
 * Bot permissions: `Send Messages`, `Embed Links`, `Use Slash Commands`,
-  `Read Message History`, `Attach Files`,
+  `Read Message History`, `Attach Files`, `Add Reactions`,
   **`Create Public Threads`**, **`Send Messages in Threads`**
 
 Open the generated URL, pick your guild, authorize.
@@ -121,6 +121,19 @@ worktree, no thread needed:
 
 Requires `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) to be set on the
 **bot** service too — see docs/COOLIFY.md.
+
+## Status reactions
+
+The bot reacts to your message so you can see progress at a glance (needs the
+**Add Reactions** permission):
+
+| Reaction | Meaning |
+|----------|---------|
+| 👀 | đang làm / running |
+| 🎉 | xong / done |
+| 💀 | lỗi / failed |
+| ✋ | đã huỷ / cancelled |
+| 🐢 | quá giờ / timeout |
 
 ## Two interaction modes at a glance
 

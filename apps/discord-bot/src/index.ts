@@ -56,6 +56,36 @@ function codeBlock(s: string, lang = "") {
   return "```" + lang + "\n" + s + "\n```";
 }
 
+// Playful status reactions on the triggering message.
+const RUNNING_EMOJI = "👀"; // đang làm
+const STATUS_EMOJIS = ["👀", "🎉", "💀", "✋", "🐢"] as const;
+
+async function safeReact(message: Message, emoji: string) {
+  try {
+    await message.react(emoji);
+  } catch {
+    /* missing Add Reactions permission — ignore */
+  }
+}
+
+/** Set a single status emoji, removing the bot's previous status reactions. */
+async function setStatus(message: Message, emoji: string) {
+  if (!bot.user) return;
+  for (const e of STATUS_EMOJIS) {
+    if (e === emoji) continue;
+    const r = message.reactions.cache.get(e);
+    if (r) await r.users.remove(bot.user.id).catch(() => {});
+  }
+  await safeReact(message, emoji);
+}
+
+const statusEmojiForTask: Record<string, string> = {
+  succeeded: "🎉",
+  failed: "💀",
+  cancelled: "✋",
+  timeout: "🐢",
+};
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
@@ -139,7 +169,13 @@ async function handleRepoTask(i: ChatInputCommandInteraction) {
  */
 async function runThreadTask(
   thread: AnyThreadChannel,
-  input: { repoSlug: string; prompt: string; requestedBy: string; baseBranch?: string },
+  input: {
+    repoSlug: string;
+    prompt: string;
+    requestedBy: string;
+    baseBranch?: string;
+    reactTarget?: Message;
+  },
 ) {
   let taskId: string;
   try {
@@ -153,17 +189,22 @@ async function runThreadTask(
     });
     taskId = created.task.id;
   } catch (err) {
+    if (input.reactTarget) await setStatus(input.reactTarget, "💀");
     await thread.send(`Failed to queue task: ${(err as Error).message}`).catch(() => {});
     return;
   }
-  await streamTaskToChannel(thread, taskId);
+  await streamTaskToChannel(thread, taskId, input.reactTarget);
 }
 
 /**
  * Subscribe to a task's Redis event channel and relay output into a Discord
  * channel (a thread). Throttles writes to respect Discord rate limits.
  */
-async function streamTaskToChannel(channel: TextBasedChannel, taskId: string) {
+async function streamTaskToChannel(
+  channel: TextBasedChannel,
+  taskId: string,
+  reactTarget?: Message,
+) {
   if (!("send" in channel)) return;
   const sub = redis.duplicate();
   const eventChannel = EVENT_CHANNEL(taskId);
@@ -207,6 +248,7 @@ async function streamTaskToChannel(channel: TextBasedChannel, taskId: string) {
         clearInterval(flushTimer);
         sub.unsubscribe(eventChannel).catch(() => {});
         sub.disconnect();
+        if (reactTarget) await setStatus(reactTarget, statusEmojiForTask[ev.status] ?? "🎉");
         await channel.send(`Task \`${taskId}\` → **${ev.status}**`).catch(() => {});
         try {
           const { diff } = await api.getDiff(taskId);
@@ -252,11 +294,13 @@ async function handleThreadMessage(message: Message) {
   }
   if (thread.status !== "active") return;
 
+  await setStatus(message, RUNNING_EMOJI);
   await message.channel.sendTyping().catch(() => {});
   await runThreadTask(message.channel as AnyThreadChannel, {
     repoSlug: thread.repoSlug,
     prompt: content,
     requestedBy: message.author.id,
+    reactTarget: message,
   });
 }
 
@@ -289,6 +333,7 @@ async function handleMention(message: Message) {
   const scratch = path.join(cfg.workspace.root, "chat", message.channelId);
   await fs.mkdir(scratch, { recursive: true });
 
+  await setStatus(message, RUNNING_EMOJI);
   await channel.sendTyping().catch(() => {});
   const typing = setInterval(() => channel.sendTyping().catch(() => {}), 8_000);
 
@@ -314,8 +359,10 @@ async function handleMention(message: Message) {
     for (const part of chunk(out, 1990)) {
       await channel.send(part).catch(() => {});
     }
+    await setStatus(message, res.exitCode === 0 ? "🎉" : "💀");
   } catch (err) {
     clearInterval(typing);
+    await setStatus(message, "💀");
     log.error({ err, channelId: message.channelId }, "chat run failed");
     await channel.send(`Lỗi khi chat: ${(err as Error).message}`).catch(() => {});
   }
