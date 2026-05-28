@@ -42,6 +42,8 @@ export function tasksRouter() {
         requestedBy: input.requestedBy,
         baseBranch: input.baseBranch,
         threadId: input.threadId,
+        // Per-thread model choice (from /model); undefined → CLI default model.
+        model: input.model,
       },
       { jobId: id },
     );

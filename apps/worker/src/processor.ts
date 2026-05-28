@@ -28,6 +28,8 @@ export interface TaskJobData {
   requestedBy?: string;
   baseBranch?: string;
   threadId?: string;
+  /** Claude model alias to run with (e.g. "opus"); undefined → CLI default. */
+  model?: string;
 }
 
 export interface ProcessOptions {
@@ -147,6 +149,8 @@ export async function processTask(data: TaskJobData, opts: ProcessOptions = {}):
       workspacePath: wt.path,
       resumeSessionId,
       signal: opts.signal,
+      // Forward the per-thread model choice (if any) to the Claude CLI.
+      extraArgs: data.model ? ["--model", data.model] : undefined,
       onStdout: (chunk) => {
         publish(taskId, { type: "stdout", taskId, data: chunk, at: Date.now() }).catch(() => {});
         persistLog(taskId, "stdout", chunk).catch((e) =>

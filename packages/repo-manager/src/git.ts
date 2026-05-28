@@ -146,3 +146,16 @@ export async function currentBranch(repoPath: string): Promise<string> {
   const r = await git(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoPath });
   return r.stdout.trim();
 }
+
+/**
+ * Hard-rewind a worktree back to a clean state at `baseRef` (e.g. "origin/main"):
+ * drop every committed and uncommitted change, then remove untracked files.
+ * This powers the bot's /rewind. It is destructive *by design* but contained:
+ * it only ever touches a per-thread throwaway worktree, never the main clone.
+ */
+export async function resetWorktree(worktreePath: string, baseRef: string) {
+  // reset --hard moves HEAD + index + tracked files back to baseRef…
+  await git(["reset", "--hard", baseRef], { cwd: worktreePath });
+  // …and clean -fd removes any new untracked files/dirs Claude created.
+  return git(["clean", "-fd"], { cwd: worktreePath });
+}

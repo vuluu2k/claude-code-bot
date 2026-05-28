@@ -26,6 +26,12 @@ export const CreateTaskRequest = z.object({
    * throwaway worktree.
    */
   threadId: z.string().optional(),
+  /**
+   * Claude model alias to run this task with (e.g. "opus", "sonnet", "haiku").
+   * Forwarded to the CLI as `--model`. Omit to use the CLI's default model.
+   * Per-thread selection is chosen via the bot's /model command.
+   */
+  model: z.string().max(40).optional(),
 });
 export type CreateTaskRequest = z.infer<typeof CreateTaskRequest>;
 

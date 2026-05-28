@@ -56,6 +56,52 @@ function codeBlock(s: string, lang = "") {
   return "```" + lang + "\n" + s + "\n```";
 }
 
+/**
+ * Render one line of Claude's `stream-json` output into chat-style text for
+ * Discord. We surface only the assistant's natural-language replies so a thread
+ * reads like a conversation — not an agent trace. Everything else (system init,
+ * thinking, tool calls, tool results, rate-limit pings, the duplicate final
+ * success result) is dropped.
+ */
+function renderClaudeStreamLine(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let ev: any;
+  try {
+    ev = JSON.parse(trimmed);
+  } catch {
+    return null; // partial / non-JSON output — ignore
+  }
+  switch (ev?.type) {
+    case "assistant": {
+      const blocks = ev.message?.content;
+      if (!Array.isArray(blocks)) return null;
+      const out: string[] = [];
+      for (const b of blocks) {
+        // Only spoken text — skip thinking, tool_use, and other block types.
+        if (b?.type === "text" && b.text?.trim()) out.push(b.text.trim());
+      }
+      return out.length ? out.join("\n\n") : null;
+    }
+    case "result":
+      // The success result just repeats the final assistant text we already
+      // streamed — only surface genuine errors here.
+      if (ev.is_error && typeof ev.result === "string") return `⚠️ ${ev.result.trim()}`;
+      return null;
+    default:
+      // system / user(tool_result) / rate_limit_event / stream_event → skip
+      return null;
+  }
+}
+
+/** Drop noise lines from Claude's stderr (e.g. the harmless stdin warning). */
+function cleanStderr(data: string): string {
+  return data
+    .split("\n")
+    .filter((l) => l.trim() && !/no stdin data received/i.test(l))
+    .join("\n");
+}
+
 // Playful status reactions on the triggering message.
 const RUNNING_EMOJI = "👀"; // đang làm
 const STATUS_EMOJIS = ["👀", "🎉", "💀", "✋", "🐢"] as const;
@@ -85,6 +131,11 @@ const statusEmojiForTask: Record<string, string> = {
   cancelled: "✋",
   timeout: "🐢",
 };
+
+// Per-thread Claude model selection (set via /model), keyed by Discord thread
+// id. In-memory only: it resets to the CLI default when the bot restarts. The
+// sentinel "default" means "don't pass --model" — handled by clearing the entry.
+const threadModel = new Map<string, string>();
 
 // ---------------------------------------------------------------------------
 // Command handlers
@@ -186,6 +237,8 @@ async function runThreadTask(
       channelId: thread.id,
       threadId: thread.id,
       baseBranch: input.baseBranch,
+      // Per-thread model picked via /model (undefined → CLI default).
+      model: threadModel.get(thread.id),
     });
     taskId = created.task.id;
   } catch (err) {
@@ -210,14 +263,34 @@ async function streamTaskToChannel(
   const eventChannel = EVENT_CHANNEL(taskId);
   await sub.subscribe(eventChannel);
 
-  let buffer = "";
+  let buffer = ""; // rendered, human-readable text waiting to be sent
+  let lineBuffer = ""; // raw stream-json bytes not yet terminated by a newline
   let lastFlush = Date.now();
+  const append = (text: string) => {
+    if (text) buffer += (buffer ? "\n\n" : "") + text;
+  };
   const flush = async () => {
     if (!buffer.trim()) return;
     const out = buffer;
     buffer = "";
-    for (const part of chunk(codeBlock(out.slice(-1900)))) {
+    for (const part of chunk(out)) {
       await channel.send(part).catch(() => {});
+    }
+  };
+
+  // Claude emits one JSON object per line. Chunks may split a line, so buffer
+  // until a newline, then render each complete line into readable text.
+  const ingest = (data: string) => {
+    lineBuffer += data;
+    let nl: number;
+    while ((nl = lineBuffer.indexOf("\n")) !== -1) {
+      const line = lineBuffer.slice(0, nl).trim();
+      lineBuffer = lineBuffer.slice(nl + 1);
+      if (!line) continue;
+      // JSON lines are Claude stream-json events; anything else is a plain-text
+      // notice the worker injected (e.g. the auto-PR link) — show it verbatim.
+      if (line.startsWith("{")) append(renderClaudeStreamLine(line) ?? "");
+      else append(line);
     }
   };
 
@@ -236,33 +309,32 @@ async function streamTaskToChannel(
     } catch {
       return;
     }
-    if (ev.type === "stdout" || ev.type === "stderr") {
-      buffer += ev.data;
+    if (ev.type === "stdout") {
+      ingest(ev.data);
+      if (buffer.length > 1_500) {
+        lastFlush = Date.now();
+        await flush();
+      }
+    } else if (ev.type === "stderr") {
+      append(cleanStderr(ev.data)); // stderr is plain text, not stream-json
       if (buffer.length > 1_500) {
         lastFlush = Date.now();
         await flush();
       }
     } else if (ev.type === "status") {
+      // Render any trailing partial line before the final flush.
+      const tail = renderClaudeStreamLine(lineBuffer);
+      lineBuffer = "";
+      if (tail) append(tail);
       await flush();
       if (["succeeded", "failed", "cancelled", "timeout"].includes(ev.status)) {
         clearInterval(flushTimer);
         sub.unsubscribe(eventChannel).catch(() => {});
         sub.disconnect();
+        // Chat-style: status is conveyed only by the emoji reaction on the
+        // triggering message — no robotic "Task → status" line or diff dump.
+        // Use /diff to inspect changes when needed.
         if (reactTarget) await setStatus(reactTarget, statusEmojiForTask[ev.status] ?? "🎉");
-        await channel.send(`Task \`${taskId}\` → **${ev.status}**`).catch(() => {});
-        try {
-          const { diff } = await api.getDiff(taskId);
-          if (diff?.hasChanges) {
-            await channel.send(
-              `Diff: ${diff.totalFiles} file(s), +${diff.insertions}/-${diff.deletions}\n` +
-                codeBlock(diff.preview.slice(0, 1700), "diff"),
-            );
-          } else {
-            await channel.send("No file changes. Type another message to continue.");
-          }
-        } catch (e) {
-          log.warn({ err: e, taskId }, "diff fetch failed");
-        }
       }
     }
   });
@@ -293,6 +365,24 @@ async function handleThreadMessage(message: Message) {
     return; // not a registered task thread
   }
   if (thread.status !== "active") return;
+
+  // Shortcut: a short, standalone "cancel"/"huỷ" message stops the task that's
+  // currently running in this thread. Because we no longer print task ids in
+  // chat-style threads, this is the only ergonomic way to cancel — the API
+  // resolves the active task from the thread id for us. Mixed instructions
+  // (e.g. "dừng việc đó rồi làm cái khác") are too long to match and go to Claude.
+  if (looksLikeCancelRequest(content)) {
+    await setStatus(message, "✋");
+    try {
+      const { ok } = await api.cancelThread(message.channelId);
+      await message.channel
+        .send(ok ? "Đã huỷ task đang chạy." : "Hiện không có task nào đang chạy để huỷ.")
+        .catch(() => {});
+    } catch (err) {
+      await message.channel.send(`Huỷ thất bại: ${(err as Error).message}`).catch(() => {});
+    }
+    return;
+  }
 
   // Shortcut: a short, standalone "create PR" message opens the PR directly
   // (commit + push + gh pr) without spinning up a full Claude task. Longer or
@@ -335,6 +425,20 @@ function looksLikePrRequest(text: string): boolean {
   // Require an action verb or be a very short bare request.
   const hasVerb = /(tạo|mở|gửi|đẩy|push|create|open|make|raise|submit)/.test(t);
   return hasVerb || t.length <= 12;
+}
+
+/**
+ * Heuristic: is this short thread message asking to stop the running task?
+ * Kept deliberately conservative: only fires on short messages that *start*
+ * with a cancel verb followed by a boundary, so "stopwatch feature" or longer
+ * mixed instructions still go to Claude rather than aborting by accident.
+ * Covers both English (cancel/stop/abort) and Vietnamese (huỷ/hủy/dừng/ngừng).
+ */
+function looksLikeCancelRequest(text: string): boolean {
+  // Strip trailing punctuation so "huỷ!" / "stop." still match.
+  const t = text.toLowerCase().trim().replace(/[.!?…]+$/u, "").trim();
+  if (t.length > 24) return false;
+  return /^(cancel|stop|abort|huỷ|hủy|dừng|ngừng)(\s|$)/u.test(t);
 }
 
 const CHAT_TIMEOUT_MS = 180_000;
@@ -472,10 +576,29 @@ async function handleMention(message: Message) {
   }
 }
 
+/**
+ * Resolve the task id a command should act on: the explicit `task_id` option if
+ * given, otherwise — when run inside a thread — that thread's most recent task.
+ * Returns undefined when neither applies, so callers can show a helpful hint.
+ */
+async function resolveTaskId(i: ChatInputCommandInteraction): Promise<string | undefined> {
+  const explicit = i.options.getString("task_id");
+  if (explicit) return explicit;
+  if (i.channel?.isThread()) {
+    const { task } = await api.latestThreadTask(i.channelId);
+    return task?.id;
+  }
+  return undefined;
+}
+
 async function handleStatus(i: ChatInputCommandInteraction) {
-  const id = i.options.getString("task_id", true);
   await i.deferReply({ ephemeral: true });
   try {
+    const id = await resolveTaskId(i);
+    if (!id) {
+      await i.editReply("Cần `task_id`, hoặc dùng `/status` trong thread để xem task gần nhất.");
+      return;
+    }
     const { task } = await api.getTask(id);
     await i.editReply(
       `**${task.id}** [${task.status}]\n` +
@@ -489,16 +612,20 @@ async function handleStatus(i: ChatInputCommandInteraction) {
 }
 
 async function handleDiff(i: ChatInputCommandInteraction) {
-  const id = i.options.getString("task_id", true);
   await i.deferReply({ ephemeral: true });
   try {
+    const id = await resolveTaskId(i);
+    if (!id) {
+      await i.editReply("Cần `task_id`, hoặc dùng `/diff` trong thread để xem thay đổi hiện tại.");
+      return;
+    }
     const { diff } = await api.getDiff(id);
     if (!diff) {
-      await i.editReply("No diff available (worktree not initialized).");
+      await i.editReply("Chưa có diff (worktree chưa được khởi tạo).");
       return;
     }
     if (!diff.hasChanges) {
-      await i.editReply("No changes.");
+      await i.editReply("Không có thay đổi nào.");
       return;
     }
     await i.editReply(
@@ -574,14 +701,163 @@ async function handlePr(i: ChatInputCommandInteraction) {
 }
 
 async function handleCancel(i: ChatInputCommandInteraction) {
-  const id = i.options.getString("task_id", true);
+  // task_id is optional now: inside a thread you can just run `/cancel` and we
+  // cancel that thread's running task. The explicit id is still accepted for
+  // cancelling a task from anywhere (e.g. another channel).
+  const id = i.options.getString("task_id");
   await i.deferReply({ ephemeral: true });
   try {
-    await api.cancelTask(id);
-    await i.editReply(`Cancellation signal sent for \`${id}\`.`);
+    if (id) {
+      await api.cancelTask(id);
+      await i.editReply(`Đã gửi tín hiệu huỷ cho \`${id}\`.`);
+      return;
+    }
+    if (i.channel?.isThread()) {
+      const { ok } = await api.cancelThread(i.channelId);
+      await i.editReply(ok ? "Đã huỷ task đang chạy trong thread này." : "Hiện không có task nào đang chạy.");
+      return;
+    }
+    // No id and not in a thread — we have nothing to target.
+    await i.editReply("Cần `task_id`, hoặc gõ `/cancel` ngay trong thread để huỷ task đang chạy ở đó.");
   } catch (err) {
-    await i.editReply(`Failed: ${(err as Error).message}`);
+    await i.editReply(`Thất bại: ${(err as Error).message}`);
   }
+}
+
+// /model — set which Claude model this thread uses. Stored in-memory per thread
+// and applied to the next message. "default" clears the override.
+async function handleModel(i: ChatInputCommandInteraction) {
+  const name = i.options.getString("name", true);
+  await i.deferReply({ ephemeral: true });
+  if (!i.channel?.isThread()) {
+    await i.editReply("Dùng `/model` bên trong một thread do `/repo` tạo nhé.");
+    return;
+  }
+  if (name === "default") {
+    threadModel.delete(i.channelId);
+    await i.editReply("Đã đặt model về **mặc định** của CLI cho thread này.");
+  } else {
+    threadModel.set(i.channelId, name);
+    await i.editReply(`Đã đặt model thành **${name}** cho thread này (áp dụng từ tin nhắn kế tiếp).`);
+  }
+}
+
+// /new — fresh conversation in this thread; the worktree (code) is kept but the
+// Claude context is forgotten so the next message starts a new session.
+async function handleNew(i: ChatInputCommandInteraction) {
+  await i.deferReply();
+  if (!i.channel?.isThread()) {
+    await i.editReply("Dùng `/new` bên trong một thread do `/repo` tạo nhé.");
+    return;
+  }
+  try {
+    await api.newThread(i.channelId);
+    await i.editReply("Bắt đầu hội thoại mới trong thread này (giữ nguyên code, quên ngữ cảnh cũ).");
+  } catch (err) {
+    await i.editReply(`Thất bại: ${(err as Error).message}`);
+  }
+}
+
+// /resume — reactivate a closed/archived thread so it accepts messages again.
+async function handleResume(i: ChatInputCommandInteraction) {
+  await i.deferReply();
+  if (!i.channel?.isThread()) {
+    await i.editReply("Dùng `/resume` bên trong một thread do `/repo` tạo nhé.");
+    return;
+  }
+  try {
+    const { resumed } = await api.resumeThread(i.channelId);
+    await i.editReply(
+      resumed
+        ? "Đã tiếp tục hội thoại — cứ nhắn tiếp, Claude vẫn nhớ ngữ cảnh trước đó."
+        : "Thread đã sẵn sàng — cứ nhắn để bắt đầu (chưa có ngữ cảnh trước đó).",
+    );
+  } catch (err) {
+    await i.editReply(`Thất bại: ${(err as Error).message}`);
+  }
+}
+
+// /rewind — discard ALL changes in this thread's worktree, back to base branch.
+async function handleRewind(i: ChatInputCommandInteraction) {
+  await i.deferReply();
+  if (!i.channel?.isThread()) {
+    await i.editReply("Dùng `/rewind` bên trong một thread do `/repo` tạo nhé.");
+    return;
+  }
+  try {
+    const { discarded } = await api.rewindThread(i.channelId);
+    await i.editReply(`Đã hoàn tác mọi thay đổi trong thread (về nhánh gốc). Đã bỏ: ${discarded}.`);
+  } catch (err) {
+    await i.editReply(`Rewind thất bại: ${(err as Error).message}`);
+  }
+}
+
+// /end — close this thread; the ThreadUpdate/Delete handlers free its worktree.
+async function handleEnd(i: ChatInputCommandInteraction) {
+  if (!i.channel?.isThread()) {
+    await i.reply({ content: "Dùng `/end` bên trong một thread do `/repo` tạo nhé.", ephemeral: true });
+    return;
+  }
+  await i.deferReply();
+  try {
+    await api.closeThread(i.channelId);
+    await i.editReply("Đã đóng thread. Tạo `/repo` mới để bắt đầu phiên khác.");
+    // Archiving needs Manage Threads — best-effort, ignore if missing.
+    await i.channel.setArchived(true).catch(() => {});
+  } catch (err) {
+    await i.editReply(`Không đóng được: ${(err as Error).message}`);
+  }
+}
+
+// /tasks — list recent tasks, newest first, optionally filtered by repo.
+async function handleTasks(i: ChatInputCommandInteraction) {
+  const repo = i.options.getString("repo") ?? undefined;
+  await i.deferReply({ ephemeral: true });
+  try {
+    const { tasks } = await api.listTasks(repo, 15);
+    if (!tasks.length) {
+      await i.editReply("Chưa có task nào.");
+      return;
+    }
+    const lines = tasks.map(
+      (t) => `• \`${t.id}\` [${t.status}] **${t.repoSlug}** — ${t.prompt.slice(0, 50)}`,
+    );
+    await i.editReply(lines.join("\n").slice(0, 1900));
+  } catch (err) {
+    await i.editReply(`Thất bại: ${(err as Error).message}`);
+  }
+}
+
+// /help — quick reference for how the bot and its threads work.
+async function handleHelp(i: ChatInputCommandInteraction) {
+  await i.deferReply({ ephemeral: true });
+  await i.editReply(
+    [
+      "**Cách dùng bot**",
+      "",
+      "`/repo` mở một **thread** cho task. Cứ nhắn tiếp trong thread để Claude làm tiếp — giữ nguyên ngữ cảnh và worktree.",
+      "",
+      "Trong thread bạn có thể gõ thẳng:",
+      "• `huỷ` / `dừng` / `cancel` — dừng task đang chạy",
+      "• `tạo PR` — mở pull request",
+      "",
+      "Lệnh điều khiển hội thoại (giống Claude Code):",
+      "• `/model` — chọn model (opus/sonnet/haiku)",
+      "• `/new` — bắt đầu hội thoại mới (giữ code)",
+      "• `/resume` — tiếp tục thread đã đóng",
+      "• `/rewind` — bỏ hết thay đổi, về nhánh gốc",
+      "• `/end` — đóng thread, dọn worktree",
+      "",
+      "Lệnh thông tin (trong thread không cần task id):",
+      "• `/diff` — xem thay đổi code",
+      "• `/status` — trạng thái task",
+      "• `/pr` — đẩy nhánh và mở pull request",
+      "• `/tasks` — liệt kê task gần đây",
+      "• `/repos`, `/register-repo`, `/session` — quản lý repo/session",
+      "",
+      "Tag `@bot` ở kênh thường để hỏi đáp nhanh (không cần repo).",
+    ].join("\n"),
+  );
 }
 
 async function handleAutocomplete(i: AutocompleteInteraction) {
@@ -643,6 +919,20 @@ bot.on(Events.InteractionCreate, async (interaction: Interaction) => {
         return handleCancel(interaction);
       case "pr":
         return handlePr(interaction);
+      case "model":
+        return handleModel(interaction);
+      case "new":
+        return handleNew(interaction);
+      case "resume":
+        return handleResume(interaction);
+      case "rewind":
+        return handleRewind(interaction);
+      case "end":
+        return handleEnd(interaction);
+      case "tasks":
+        return handleTasks(interaction);
+      case "help":
+        return handleHelp(interaction);
     }
   } catch (err) {
     log.error({ err }, "interaction handler crashed");

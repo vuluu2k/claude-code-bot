@@ -59,7 +59,15 @@ export const client = {
     sessionId?: string;
     baseBranch?: string;
     threadId?: string;
+    /** Claude model alias (e.g. "opus") chosen via /model. */
+    model?: string;
   }) => api<{ task: Task }>("POST", "/tasks", input),
+  // Recent tasks, optionally filtered by repo. Used by /tasks.
+  listTasks: (repoSlug?: string, limit = 15) =>
+    api<{ tasks: Task[] }>(
+      "GET",
+      `/tasks?${repoSlug ? `repo=${encodeURIComponent(repoSlug)}&` : ""}limit=${limit}`,
+    ),
   registerThread: (input: {
     id: string;
     repoSlug: string;
@@ -81,7 +89,23 @@ export const client = {
     api<{ pr: string | null; reason?: string }>("POST", `/threads/${id}/pr`, { title }),
   getTask: (id: string) => api<{ task: Task }>("GET", `/tasks/${id}`),
   getLogs: (id: string) => api<{ logs: TaskLog[] }>("GET", `/tasks/${id}/logs`),
+  // Cancel a specific task by id.
   cancelTask: (id: string) => api<{ ok: true }>("POST", `/tasks/${id}/cancel`),
+  // Cancel whichever task is currently running in a thread (id = thread id).
+  // `ok` is false when nothing was running, so callers can tell the difference.
+  cancelThread: (id: string) =>
+    api<{ ok: boolean; taskId?: string; reason?: string }>("POST", `/threads/${id}/cancel`),
+  // Most recent task in a thread — lets /diff and /status work without a task id.
+  latestThreadTask: (id: string) =>
+    api<{ task: Task | null }>("GET", `/threads/${id}/latest-task`),
+  // /new — fresh Claude conversation in the same worktree (forgets prior context).
+  newThread: (id: string) => api<{ ok: true }>("POST", `/threads/${id}/new`),
+  // /resume — reactivate a closed/archived thread to keep chatting in it.
+  resumeThread: (id: string) =>
+    api<{ ok: true; resumed: boolean }>("POST", `/threads/${id}/resume`),
+  // /rewind — discard all changes in the thread's worktree back to base.
+  rewindThread: (id: string) =>
+    api<{ ok: true; discarded: string }>("POST", `/threads/${id}/rewind`),
   getDiff: (id: string) =>
     api<{ diff: { stat: string; preview: string; totalFiles: number; insertions: number; deletions: number; hasChanges: boolean } | null }>(
       "GET",

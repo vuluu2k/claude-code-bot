@@ -12,6 +12,8 @@ export interface TaskJobData {
   requestedBy?: string;
   baseBranch?: string;
   threadId?: string;
+  /** Claude model alias to run with (e.g. "opus"); undefined → CLI default. */
+  model?: string;
 }
 
 let _connection: IORedis | null = null;
