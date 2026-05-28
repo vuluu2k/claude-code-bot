@@ -1,0 +1,29 @@
+# Sandbox image used by `SANDBOX_MODE=docker`. The worker mounts each worktree
+# into /workspace and runs `claude --print …` here, isolated from the host.
+#
+# Build: docker build -t ccb-sandbox -f infra/docker/Dockerfile.sandbox .
+# Override via SANDBOX_IMAGE=ccb-sandbox in the worker env.
+
+FROM node:24-bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git \
+      curl \
+      ca-certificates \
+      jq \
+      ripgrep \
+      python3 \
+      build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code
+
+# Non-root user — uid:gid matches the default policy.docker.user in @ccb/sandbox.
+RUN groupadd -g 1000 ccb && useradd -m -u 1000 -g 1000 ccb
+USER ccb
+WORKDIR /workspace
+
+CMD ["claude", "--help"]

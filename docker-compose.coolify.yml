@@ -1,0 +1,129 @@
+# Coolify deployment for claude-code-bot.
+#
+# Designed for Coolify "Docker Compose" resource type:
+#   - build context = repo root (Coolify clones the repo here)
+#   - env vars come from Coolify UI, NOT from .env / env_file
+#   - no `ports:` — Coolify proxy (Traefik/Caddy) maps domains via UI
+#   - named volumes survive redeploys
+#
+# See docs/COOLIFY.md for step-by-step setup.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ccb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ccb
+    volumes:
+      - ccb-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccb -d ccb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ccb-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+      API_PORT: 4000
+      API_BASE_URL: ${API_BASE_URL:-http://api:4000}
+      WORKSPACE_ROOT: /app/workspaces
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      CLAUDE_TIMEOUT_MS: ${CLAUDE_TIMEOUT_MS:-900000}
+    command: ["bun", "apps/api/src/index.ts"]
+    expose:
+      - "4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - ccb-workspaces:/app/workspaces
+      - ccb-claude-auth:/root/.claude
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+      WORKSPACE_ROOT: /app/workspaces
+      # Claude auth — set ONE of these (in order of preference):
+      #   1. CLAUDE_CODE_OAUTH_TOKEN — long-lived OAuth token for Max/Pro
+      #      subscriptions. Generate with `claude setup-token` on any logged-in
+      #      machine. Recommended for headless deploys (no volume needed).
+      #   2. ANTHROPIC_API_KEY     — API key from console.anthropic.com.
+      #   3. Interactive `claude /login` in this terminal — credentials persist
+      #      in the ccb-claude-auth volume mounted at /root/.claude.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      SANDBOX_MODE: ${SANDBOX_MODE:-host}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      TASK_TIMEOUT_MS: ${TASK_TIMEOUT_MS:-900000}
+      CLAUDE_TIMEOUT_MS: ${CLAUDE_TIMEOUT_MS:-900000}
+      CLAUDE_MAX_OUTPUT_BYTES: ${CLAUDE_MAX_OUTPUT_BYTES:-2000000}
+    command: ["bun", "apps/worker/src/index.ts"]
+    volumes:
+      - ccb-workspaces:/app/workspaces
+      - ccb-claude-auth:/root/.claude
+
+  bot:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+      API_BASE_URL: http://api:4000
+      WORKSPACE_ROOT: /app/workspaces
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_ADMIN_IDS: ${DISCORD_ADMIN_IDS:-}
+    command: ["bun", "apps/discord-bot/src/index.ts"]
+
+volumes:
+  ccb-pgdata:
+  ccb-redis:
+  ccb-workspaces:
+  ccb-claude-auth:    # Claude Max OAuth tokens — persists across redeploys.

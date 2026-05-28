@@ -1,0 +1,37 @@
+{
+  "name": "claude-code-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted AI Engineering Platform powered by Claude Code, Discord, and isolated git worktrees",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "db:generate": "bun --filter @ccb/db generate",
+    "db:migrate": "bun --filter @ccb/db migrate",
+    "db:studio": "bun --filter @ccb/db studio",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "start:api": "bun --filter @ccb/api start",
+    "start:worker": "bun --filter @ccb/worker start",
+    "start:bot": "bun --filter @ccb/discord-bot start"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "@types/node": "^22.10.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "bun": ">=1.1.0",
+    "node": ">=20.0.0"
+  },
+  "packageManager": "bun@1.1.38"
+}

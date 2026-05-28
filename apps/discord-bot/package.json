@@ -1,0 +1,27 @@
+{
+  "name": "@ccb/discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "register": "bun run src/register-commands.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ccb/shared": "workspace:*",
+    "@ccb/db": "workspace:*",
+    "@ccb/repo-manager": "workspace:*",
+    "@discordjs/rest": "^2.4.2",
+    "discord-api-types": "^0.37.110",
+    "discord.js": "^14.16.3",
+    "drizzle-orm": "^0.36.4",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

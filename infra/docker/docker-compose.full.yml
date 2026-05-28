@@ -1,0 +1,79 @@
+version: "3.9"
+
+# Full stack for VPS deployment. Runs Postgres + Redis + api + worker + bot.
+# The worker needs Docker access if SANDBOX_MODE=docker (we mount the socket).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ccb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ccb}
+      POSTGRES_DB: ccb
+    volumes:
+      - ccb-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccb -d ccb"]
+      interval: 5s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ccb-redis:/data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD:-ccb}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    command: ["bun", "apps/api/src/index.ts"]
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - ccb-workspaces:/app/workspaces
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD:-ccb}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    command: ["bun", "apps/worker/src/index.ts"]
+    volumes:
+      - ccb-workspaces:/app/workspaces
+      # When SANDBOX_MODE=docker, the worker needs Docker access.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  bot:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgres://ccb:${POSTGRES_PASSWORD:-ccb}@postgres:5432/ccb
+      REDIS_URL: redis://redis:6379
+      API_BASE_URL: http://api:4000
+    depends_on:
+      - api
+    command: ["bun", "apps/discord-bot/src/index.ts"]
+
+volumes:
+  ccb-pgdata:
+  ccb-redis:
+  ccb-workspaces:

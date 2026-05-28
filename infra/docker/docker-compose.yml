@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Local infrastructure for claude-code-bot. Brings up Postgres + Redis for
+# development. Applications (api / worker / discord-bot) typically run on the
+# host so they can spawn `claude` and `git` against the operator's account.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ccb
+      POSTGRES_PASSWORD: ccb
+      POSTGRES_DB: ccb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ccb-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccb -d ccb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ccb-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ccb-pgdata:
+  ccb-redis:
