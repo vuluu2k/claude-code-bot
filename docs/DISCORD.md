@@ -91,13 +91,15 @@ How it works:
   conversation memory carries over.
 * The worktree is **not** thrown away between messages — file edits accumulate
   until the thread is closed.
-* **Opening a PR** is user-triggered — two ways:
-  * Run `/pr` (optionally `/pr title:...`) inside the thread → commits, pushes
-    the thread's branch (`ccb/<threadId>`), opens or updates a PR, posts the link.
-  * Or just ask Claude in the thread: *"push branch và tạo pull request"*.
-  Follow-up tasks/commits in the same thread go to the same PR. Requires
-  `GITHUB_TOKEN` with write access. Set `AUTO_PR=true` if you instead want a PR
-  opened automatically after every task that changed files.
+* **Opening a PR** is user-triggered — three ways:
+  * Run `/pr` (optionally `/pr title:...`) inside the thread.
+  * **Just chat it**: a short message like *"tạo PR"*, *"mở pull request giúp"*,
+    or *"create a PR"* is detected and opens the PR directly (fast path).
+  * Ask Claude with a richer instruction: *"fix lint rồi tạo pull request"* — the
+    full task runs, and Claude pushes + opens the PR itself.
+  All three commit, push the thread branch (`ccb/<threadId>`), and open or update
+  the PR, then post the link. Follow-up commits go to the same PR. Requires
+  `GITHUB_TOKEN` with write access. Set `AUTO_PR=true` for fully automatic PRs.
 
 Notes:
 

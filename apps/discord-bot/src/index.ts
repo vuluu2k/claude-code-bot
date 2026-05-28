@@ -294,6 +294,24 @@ async function handleThreadMessage(message: Message) {
   }
   if (thread.status !== "active") return;
 
+  // Shortcut: a short, standalone "create PR" message opens the PR directly
+  // (commit + push + gh pr) without spinning up a full Claude task. Longer or
+  // mixed instructions (e.g. "fix the bug then make a PR") go to Claude.
+  if (looksLikePrRequest(content)) {
+    await setStatus(message, RUNNING_EMOJI);
+    try {
+      const { pr, reason } = await api.createPr(message.channelId);
+      await message.channel
+        .send(pr ? `🔗 Pull request: ${pr}` : `Chưa tạo PR: ${reason ?? "không có thay đổi"}`)
+        .catch(() => {});
+      await setStatus(message, pr ? "🎉" : "💀");
+    } catch (err) {
+      await setStatus(message, "💀");
+      await message.channel.send(`Tạo PR thất bại: ${(err as Error).message}`).catch(() => {});
+    }
+    return;
+  }
+
   await setStatus(message, RUNNING_EMOJI);
   await message.channel.sendTyping().catch(() => {});
   await runThreadTask(message.channel as AnyThreadChannel, {
@@ -302,6 +320,21 @@ async function handleThreadMessage(message: Message) {
     requestedBy: message.author.id,
     reactTarget: message,
   });
+}
+
+/**
+ * Heuristic: is this short thread message just asking to open a PR? Kept
+ * conservative — only fires on short, standalone requests so mixed instructions
+ * ("fix X then open a PR") still go to Claude.
+ */
+function looksLikePrRequest(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  if (t.length > 60) return false;
+  const mentionsPr = /\b(pull request|pull req|pr|mr)\b/.test(t) || /tạo\s*pull/.test(t);
+  if (!mentionsPr) return false;
+  // Require an action verb or be a very short bare request.
+  const hasVerb = /(tạo|mở|gửi|đẩy|push|create|open|make|raise|submit)/.test(t);
+  return hasVerb || t.length <= 12;
 }
 
 const CHAT_TIMEOUT_MS = 180_000;
