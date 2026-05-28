@@ -44,6 +44,8 @@ export function tasksRouter() {
         threadId: input.threadId,
         // Per-thread model choice (from /model); undefined → CLI default model.
         model: input.model,
+        // Discord attachment URLs; the worker downloads them into the worktree.
+        attachments: input.attachments,
       },
       { jobId: id },
     );

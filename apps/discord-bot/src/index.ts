@@ -15,7 +15,7 @@ import { promises as fs } from "node:fs";
 import { loadConfig } from "@ccb/shared/config";
 import { makeLogger } from "@ccb/shared/logger";
 import { run } from "@ccb/shared/shell";
-import { EVENT_CHANNEL, type StreamEvent } from "@ccb/shared";
+import { EVENT_CHANNEL, downloadAttachments, type StreamEvent } from "@ccb/shared";
 import { client as api } from "./api-client.js";
 import { registerCommands } from "./register-commands.js";
 
@@ -54,6 +54,11 @@ function chunk(s: string, max = 1900): string[] {
 
 function codeBlock(s: string, lang = "") {
   return "```" + lang + "\n" + s + "\n```";
+}
+
+/** URLs of every file attached to a message (any type, not just images). */
+function attachmentUrls(message: Message): string[] {
+  return [...message.attachments.values()].map((a) => a.url);
 }
 
 /**
@@ -226,6 +231,7 @@ async function runThreadTask(
     requestedBy: string;
     baseBranch?: string;
     reactTarget?: Message;
+    attachments?: string[];
   },
 ) {
   let taskId: string;
@@ -239,6 +245,8 @@ async function runThreadTask(
       baseBranch: input.baseBranch,
       // Per-thread model picked via /model (undefined → CLI default).
       model: threadModel.get(thread.id),
+      // Files the user attached in Discord (downloaded worker-side).
+      attachments: input.attachments,
     });
     taskId = created.task.id;
   } catch (err) {
@@ -353,7 +361,9 @@ async function handleThreadMessage(message: Message) {
   if (message.author.bot) return;
   if (!message.channel.isThread()) return;
   const content = message.content.trim();
-  if (!content) return;
+  const attachments = attachmentUrls(message);
+  // Allow file-only messages (attachment with no text); bail only if both empty.
+  if (!content && !attachments.length) return;
   // Ignore commands and our own status lines.
   if (content.startsWith("/")) return;
 
@@ -406,9 +416,11 @@ async function handleThreadMessage(message: Message) {
   await message.channel.sendTyping().catch(() => {});
   await runThreadTask(message.channel as AnyThreadChannel, {
     repoSlug: thread.repoSlug,
-    prompt: content,
+    // File-only message → give Claude a default instruction to inspect them.
+    prompt: content || "Hãy xem (các) file đính kèm và xử lý theo đó.",
     requestedBy: message.author.id,
     reactTarget: message,
+    attachments,
   });
 }
 
@@ -531,9 +543,11 @@ async function handleMention(message: Message) {
   const channel = message.channel;
 
   const text = message.content.replace(/<@!?\d+>/g, "").trim();
-  if (!text) {
+  const attachments = attachmentUrls(message);
+  // Allow file-only mentions (attachment, no text); only bail if both are empty.
+  if (!text && !attachments.length) {
     await message
-      .reply("Tag mình kèm nội dung nhé, ví dụ: `@bot 2+2 bằng mấy?`")
+      .reply("Tag mình kèm nội dung hoặc file nhé, ví dụ: `@bot 2+2 bằng mấy?`")
       .catch(() => {});
     return;
   }
@@ -545,7 +559,18 @@ async function handleMention(message: Message) {
   await channel.sendTyping().catch(() => {});
   const typing = setInterval(() => channel.sendTyping().catch(() => {}), 8_000);
 
-  const prompt = await buildChatPrompt(message, text);
+  let prompt = await buildChatPrompt(message, text || "Hãy xem (các) file đính kèm và trả lời.");
+  // Download attachments into the scratch cwd so Claude's Read tool can open them.
+  if (attachments.length) {
+    const saved = await downloadAttachments(attachments, path.join(scratch, ".inbox"));
+    if (saved.length) {
+      const rel = saved.map((p) => path.relative(scratch, p));
+      prompt +=
+        "\n\n## File người dùng đính kèm\n" +
+        rel.map((p) => `- ${p}`).join("\n") +
+        "\n\nHãy dùng tool Read để xem nội dung các file này.";
+    }
+  }
   const args = ["--print", "--dangerously-skip-permissions"];
   if (CHAT_MODEL) args.push("--model", CHAT_MODEL);
   args.push(prompt);

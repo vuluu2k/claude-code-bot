@@ -14,6 +14,8 @@ export interface TaskJobData {
   threadId?: string;
   /** Claude model alias to run with (e.g. "opus"); undefined → CLI default. */
   model?: string;
+  /** URLs of Discord attachments to download into the worktree for Claude. */
+  attachments?: string[];
 }
 
 let _connection: IORedis | null = null;

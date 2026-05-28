@@ -32,6 +32,11 @@ export const CreateTaskRequest = z.object({
    * Per-thread selection is chosen via the bot's /model command.
    */
   model: z.string().max(40).optional(),
+  /**
+   * URLs of files the user attached in Discord (any type). The worker downloads
+   * them into the worktree so Claude can open them with its Read tool.
+   */
+  attachments: z.array(z.string().url()).max(10).optional(),
 });
 export type CreateTaskRequest = z.infer<typeof CreateTaskRequest>;
 

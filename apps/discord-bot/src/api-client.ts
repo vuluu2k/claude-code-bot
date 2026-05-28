@@ -61,6 +61,8 @@ export const client = {
     threadId?: string;
     /** Claude model alias (e.g. "opus") chosen via /model. */
     model?: string;
+    /** Discord attachment URLs to hand to Claude (downloaded by the worker). */
+    attachments?: string[];
   }) => api<{ task: Task }>("POST", "/tasks", input),
   // Recent tasks, optionally filtered by repo. Used by /tasks.
   listTasks: (repoSlug?: string, limit = 15) =>

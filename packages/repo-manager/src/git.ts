@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { run, type RunOptions } from "@ccb/shared/shell";
 import { makeLogger } from "@ccb/shared/logger";
 import { loadConfig } from "@ccb/shared/config";
@@ -153,6 +155,32 @@ export async function currentBranch(repoPath: string): Promise<string> {
  * This powers the bot's /rewind. It is destructive *by design* but contained:
  * it only ever touches a per-thread throwaway worktree, never the main clone.
  */
+/**
+ * Add a pattern to a worktree's local git excludes (`.git/info/exclude`) so
+ * generated files — e.g. the `.inbox/` of user-uploaded attachments — never
+ * show up in `git status`, diffs, or `git add -A`. Local-only: not committed,
+ * not shared. No-op if the pattern is already present.
+ */
+export async function excludeFromGit(worktreePath: string, pattern: string) {
+  const r = await git(["rev-parse", "--git-path", "info/exclude"], {
+    cwd: worktreePath,
+    allowFailure: true,
+  });
+  const rel = r.stdout.trim();
+  if (!rel) return;
+  const excludePath = path.isAbsolute(rel) ? rel : path.join(worktreePath, rel);
+  let current = "";
+  try {
+    current = await fs.readFile(excludePath, "utf8");
+  } catch {
+    /* file may not exist yet — we'll create it */
+  }
+  if (current.split("\n").some((l) => l.trim() === pattern)) return;
+  const sep = current && !current.endsWith("\n") ? "\n" : "";
+  await fs.mkdir(path.dirname(excludePath), { recursive: true }).catch(() => {});
+  await fs.appendFile(excludePath, `${sep}${pattern}\n`);
+}
+
 export async function resetWorktree(worktreePath: string, baseRef: string) {
   // reset --hard moves HEAD + index + tracked files back to baseRef…
   await git(["reset", "--hard", baseRef], { cwd: worktreePath });

@@ -1,10 +1,17 @@
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { getDb, tasks, taskLogs, sessions, threads } from "@ccb/db";
-import { EVENT_CHANNEL, type StreamEvent } from "@ccb/shared";
+import { EVENT_CHANNEL, downloadAttachments, type StreamEvent } from "@ccb/shared";
 import { makeLogger } from "@ccb/shared/logger";
 import { shortId } from "@ccb/shared/ids";
 import { isCcbError, TaskCancelledError, TimeoutError } from "@ccb/shared/errors";
-import { RepoRegistry, WorktreeManager, summarizeDiff, diffOneLiner } from "@ccb/repo-manager";
+import {
+  RepoRegistry,
+  WorktreeManager,
+  summarizeDiff,
+  diffOneLiner,
+  excludeFromGit,
+} from "@ccb/repo-manager";
 import { MemoryStore } from "@ccb/memory-system";
 import { PromptBuilder } from "@ccb/prompt-system";
 import { runClaudeTask } from "@ccb/claude-runner";
@@ -30,6 +37,8 @@ export interface TaskJobData {
   threadId?: string;
   /** Claude model alias to run with (e.g. "opus"); undefined → CLI default. */
   model?: string;
+  /** Discord attachment URLs to download into the worktree for Claude to read. */
+  attachments?: string[];
 }
 
 export interface ProcessOptions {
@@ -112,11 +121,31 @@ export async function processTask(data: TaskJobData, opts: ProcessOptions = {}):
       .catch((e) => log.warn({ err: e }, "persisting thread worktree failed"));
   }
 
+  // 2b. Download any Discord attachments into a worktree-local .inbox/ so Claude
+  //     can open them with its Read tool. We exclude .inbox/ from git first so
+  //     the uploaded files never end up in a diff, commit, or PR.
+  let taskText = prompt;
+  if (data.attachments?.length) {
+    try {
+      await excludeFromGit(wt.path, ".inbox/");
+      const saved = await downloadAttachments(data.attachments, path.join(wt.path, ".inbox"));
+      if (saved.length) {
+        const rel = saved.map((p) => path.relative(wt.path, p));
+        taskText +=
+          "\n\n## File người dùng đính kèm\n" +
+          rel.map((p) => `- ${p}`).join("\n") +
+          "\n\nHãy dùng tool Read để xem nội dung các file này trước khi xử lý.";
+      }
+    } catch (e) {
+      log.warn({ err: e, taskId }, "downloading attachments failed");
+    }
+  }
+
   // 3. Build the full prompt with memory + CLAUDE.md.
   const built = await prompts.build({
     repoSlug,
     worktreePath: wt.path,
-    task: prompt,
+    task: taskText,
   });
 
   // 4a. Resolve the prior Claude session id to chain context via --resume.
