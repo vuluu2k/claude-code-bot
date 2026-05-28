@@ -99,3 +99,32 @@ Notes:
   pressing Esc in the terminal).
 * One-off `/status`, `/diff`, `/logs` still work against any task id printed in
   the thread.
+
+## @mention — casual chat (no repo)
+
+Mention the bot in any normal channel to just talk to Claude — no repo, no
+worktree, no thread needed:
+
+```
+@claude-code-bot 2 + 2 bằng mấy?
+@claude-code-bot giải thích thuật toán quicksort ngắn gọn
+@claude-code-bot viết regex match email
+```
+
+* The bot runs Claude in a per-channel scratch dir and replies inline.
+* `--continue` keeps context per channel, so you can follow up:
+  `@bot bây giờ viết lại bằng Python` and it remembers the previous answer.
+* Conversation memory resets if the bot restarts (fine for chit-chat).
+* The bot only responds when **directly @mentioned** in normal channels (it
+  ignores everything else to avoid noise). Inside task threads you don't need to
+  mention it — just type.
+
+Requires `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) to be set on the
+**bot** service too — see docs/COOLIFY.md.
+
+## Two interaction modes at a glance
+
+| Where | How to talk | Backed by |
+|-------|-------------|-----------|
+| Normal channel | `/repo …` (start) or `@mention` (chat) | thread+worktree / scratch chat |
+| Inside a task thread | type normally, no slash | persistent worktree + `--resume` |

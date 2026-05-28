@@ -120,7 +120,13 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       DISCORD_ADMIN_IDS: ${DISCORD_ADMIN_IDS:-}
+      # Claude auth — the bot runs Claude directly for @mention casual chat.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     command: ["bun", "apps/discord-bot/src/index.ts"]
+    volumes:
+      - ccb-workspaces:/app/workspaces
+      - ccb-claude-auth:/root/.claude
 
 volumes:
   ccb-pgdata:

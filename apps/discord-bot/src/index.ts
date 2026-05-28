@@ -10,8 +10,11 @@ import {
   type TextBasedChannel,
 } from "discord.js";
 import IORedis from "ioredis";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import { loadConfig } from "@ccb/shared/config";
 import { makeLogger } from "@ccb/shared/logger";
+import { run } from "@ccb/shared/shell";
 import { EVENT_CHANNEL, type StreamEvent } from "@ccb/shared";
 import { client as api } from "./api-client.js";
 import { registerCommands } from "./register-commands.js";
@@ -257,6 +260,67 @@ async function handleThreadMessage(message: Message) {
   });
 }
 
+// Channels (per channel id) that already have a Claude chat conversation, so we
+// pass --continue on subsequent @mentions. In-memory: resets on bot restart,
+// which just starts a fresh casual conversation (fine for chit-chat).
+const chatStarted = new Set<string>();
+const CHAT_TIMEOUT_MS = 180_000;
+
+/**
+ * Casual chat: when the bot is @mentioned in a normal channel (not a task
+ * thread), run Claude in a per-channel scratch dir and reply. No repo, no
+ * worktree — just conversation. `--continue` keeps context per channel.
+ */
+async function handleMention(message: Message) {
+  if (message.author.bot) return;
+  if (message.mentions.everyone) return;
+  if (!bot.user || !message.mentions.users.has(bot.user.id)) return;
+  if (!("send" in message.channel)) return;
+  const channel = message.channel;
+
+  const text = message.content.replace(/<@!?\d+>/g, "").trim();
+  if (!text) {
+    await message
+      .reply("Tag mình kèm nội dung nhé, ví dụ: `@bot 2+2 bằng mấy?`")
+      .catch(() => {});
+    return;
+  }
+
+  const scratch = path.join(cfg.workspace.root, "chat", message.channelId);
+  await fs.mkdir(scratch, { recursive: true });
+
+  await channel.sendTyping().catch(() => {});
+  const typing = setInterval(() => channel.sendTyping().catch(() => {}), 8_000);
+
+  const args = ["--print", "--dangerously-skip-permissions"];
+  if (chatStarted.has(message.channelId)) args.push("--continue");
+  args.push(text);
+
+  const env: Record<string, string> = {};
+  if (cfg.claude.apiKey) env.ANTHROPIC_API_KEY = cfg.claude.apiKey;
+  if (cfg.claude.oauthToken) env.CLAUDE_CODE_OAUTH_TOKEN = cfg.claude.oauthToken;
+
+  try {
+    const res = await run(cfg.claude.bin, args, {
+      cwd: scratch,
+      env,
+      timeoutMs: CHAT_TIMEOUT_MS,
+      maxOutputBytes: 200_000,
+      allowFailure: true,
+    });
+    clearInterval(typing);
+    chatStarted.add(message.channelId);
+    const out = (res.stdout || res.stderr || "").trim() || "(không có phản hồi)";
+    for (const part of chunk(out, 1990)) {
+      await channel.send(part).catch(() => {});
+    }
+  } catch (err) {
+    clearInterval(typing);
+    log.error({ err, channelId: message.channelId }, "chat run failed");
+    await channel.send(`Lỗi khi chat: ${(err as Error).message}`).catch(() => {});
+  }
+}
+
 async function handleStatus(i: ChatInputCommandInteraction) {
   const id = i.options.getString("task_id", true);
   await i.deferReply({ ephemeral: true });
@@ -415,12 +479,18 @@ bot.on(Events.InteractionCreate, async (interaction: Interaction) => {
   }
 });
 
-// Follow-up messages inside task threads continue the Claude session.
+// Message handling:
+//  - inside a task thread → continue that repo's Claude session
+//  - @mention in a normal channel → casual chat (no repo)
 bot.on(Events.MessageCreate, async (message: Message) => {
   try {
-    await handleThreadMessage(message);
+    if (message.channel.isThread()) {
+      await handleThreadMessage(message);
+    } else {
+      await handleMention(message);
+    }
   } catch (err) {
-    log.error({ err }, "thread message handler crashed");
+    log.error({ err }, "message handler crashed");
   }
 });
 
