@@ -343,6 +343,8 @@ const CHAT_CONTEXT_MESSAGES = Math.max(
   0,
   Math.min(Number(process.env.CHAT_CONTEXT_MESSAGES ?? 15), 50),
 );
+// Model for @mention chat. Default to the most capable model; override via env.
+const CHAT_MODEL = process.env.CHAT_MODEL ?? "opus";
 
 function displayName(m: Message): string {
   if (bot.user && m.author.id === bot.user.id) return "Bot";
@@ -366,7 +368,12 @@ function contextLine(m: Message, max = 300): string {
  */
 async function buildChatPrompt(message: Message, question: string): Promise<string> {
   const parts: string[] = [
-    "Bạn là một trợ lý thân thiện trong một kênh chat Discord.",
+    "Bạn là một trợ lý thông minh, thân thiện trong một kênh chat Discord. " +
+      "Bạn CÓ quyền dùng công cụ: web search/web fetch để tra cứu thông tin thực tế " +
+      "(thời tiết, tin tức, giá cả, tài liệu...), và đọc/chạy lệnh khi cần. " +
+      "Khi câu hỏi cần dữ liệu thời gian thực hoặc bạn không chắc, HÃY dùng web search " +
+      "để tìm rồi trả lời kèm nguồn — đừng nói 'mình không kiểm tra được'. " +
+      "Trả lời ngắn gọn, đúng trọng tâm.",
   ];
 
   // (A) Recent channel messages, oldest → newest, excluding this one.
@@ -435,7 +442,9 @@ async function handleMention(message: Message) {
   const typing = setInterval(() => channel.sendTyping().catch(() => {}), 8_000);
 
   const prompt = await buildChatPrompt(message, text);
-  const args = ["--print", "--dangerously-skip-permissions", prompt];
+  const args = ["--print", "--dangerously-skip-permissions"];
+  if (CHAT_MODEL) args.push("--model", CHAT_MODEL);
+  args.push(prompt);
 
   const env: Record<string, string> = {};
   if (cfg.claude.apiKey) env.ANTHROPIC_API_KEY = cfg.claude.apiKey;
