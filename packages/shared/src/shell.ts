@@ -34,6 +34,40 @@ const DEFAULT_MAX_BYTES = 5_000_000;
 const DEFAULT_TIMEOUT = 60_000;
 
 /**
+ * Standard executable directories that should always be searched. When the
+ * server is launched by launchd / systemd / an IDE, PATH often lacks Homebrew
+ * (`/opt/homebrew/bin`) or even `/usr/local/bin`, which makes `gh`, `git`,
+ * `claude`, etc. fail to resolve even though they're installed. We prepend the
+ * common locations so spawned subprocesses can find them.
+ */
+const EXTRA_PATH_DIRS = [
+  "/opt/homebrew/bin",
+  "/opt/homebrew/sbin",
+  "/usr/local/bin",
+  "/usr/local/sbin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+];
+
+function augmentedPath(extra?: string): string {
+  const sep = process.platform === "win32" ? ";" : ":";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (dir: string | undefined) => {
+    if (!dir) return;
+    if (seen.has(dir)) return;
+    seen.add(dir);
+    out.push(dir);
+  };
+  for (const part of (extra ?? "").split(sep)) push(part);
+  for (const part of (process.env.PATH ?? "").split(sep)) push(part);
+  for (const dir of EXTRA_PATH_DIRS) push(dir);
+  return out.filter(Boolean).join(sep);
+}
+
+/**
  * Run a command with a fixed argv. NEVER pass shell metacharacters through `cmd`
  * — that is the entire point of this wrapper.
  */
@@ -49,9 +83,15 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
     let stderrBytes = 0;
     let truncated = false;
 
+    const mergedEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(opts.env as NodeJS.ProcessEnv | undefined),
+    };
+    mergedEnv.PATH = augmentedPath(mergedEnv.PATH);
+
     const spawnOpts: SpawnOptions = {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env as NodeJS.ProcessEnv | undefined) },
+      env: mergedEnv,
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     };
