@@ -17,13 +17,14 @@ FROM oven/bun:1.1-alpine AS runtime
 WORKDIR /app
 
 # git / openssh-client : clone repos
+# github-cli           : `gh pr create` — authenticated via GH_TOKEN from env
 # tmux                 : persistent sessions
 # nodejs + npm         : install + run @anthropic-ai/claude-code
 # curl / bash / jq     : misc tooling Claude often shells out to
 # ripgrep              : Claude's preferred search tool
 # su-exec              : drop from root → ccb in the entrypoint
 RUN apk add --no-cache \
-      git openssh-client tmux \
+      git openssh-client github-cli tmux \
       nodejs npm \
       curl bash jq ripgrep ca-certificates su-exec \
     && npm install -g @anthropic-ai/claude-code \
